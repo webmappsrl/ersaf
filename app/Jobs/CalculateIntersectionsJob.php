@@ -1,0 +1,343 @@
+<?php
+
+namespace App\Jobs;
+
+use App\Traits\SpatialDataTrait;
+use DB;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+
+/**
+ * This job calculates intersections between two models with spatial data trait.
+ *
+ * We store only the base model's ID and class, along with the intersecting model's class,
+ * rather than the full model instances. This approach solves serialization issues that occur
+ * when Laravel tries to queue models with complex attributes like geometries.
+ */
+class CalculateIntersectionsJob implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    /**
+     * The number of times the job may be attempted.
+     *
+     * @var int
+     */
+    public $tries = 3;
+
+    /**
+     * The number of seconds the job can run before timing out.
+     *
+     * @var int
+     */
+    public $timeout = 600;
+
+    protected $baseModel;
+
+    protected $intersectingModelClass;
+
+    /**
+     * Create a new job instance.
+     *
+     * @param  Model  $baseModel  The model to calculate intersections from
+     * @param  string  $intersectingModelClass  The class name of the model to find intersections with
+     */
+    public function __construct($baseModel, $intersectingModelClass)
+    {
+        $this->baseModel = $baseModel;
+        $this->intersectingModelClass = $intersectingModelClass;
+    }
+
+    /**
+     * Execute the job.
+     */
+    public function handle()
+    {
+        $baseModel = $this->baseModel;
+        $intersectingModelClass = str_starts_with($this->intersectingModelClass, 'App\\Models\\')
+            ? $this->intersectingModelClass
+            : 'App\\Models\\' . $this->intersectingModelClass;
+        $intersectingModelInstance = new $intersectingModelClass; // create a new instance of the intersecting model
+
+        // Check if models are different
+        if (get_class($baseModel) === $this->intersectingModelClass) {
+            throw new \Exception('Models must be different');
+        }
+
+        // Ensure base model has SpatialDataTrait
+        if (! in_array(SpatialDataTrait::class, class_uses_recursive($baseModel))) {
+            throw new \Exception('Base model must have SpatialDataTrait for intersections');
+        }
+        // Ensure intersecting model has SpatialDataTrait
+        if (! in_array(SpatialDataTrait::class, class_uses_recursive($intersectingModelInstance))) {
+            throw new \Exception('Intersecting model must have SpatialDataTrait for intersections');
+        }
+
+        try {
+            // Calculate intersections
+            $intersectingIds = $baseModel->getIntersections($intersectingModelInstance)
+                ->pluck('id')
+                ->toArray();
+
+            // Check if there is a direct relationship between the two models
+            $directRelations = [
+                'areas' => ['provinces' => 'province_id'],
+                'cai_huts' => ['regions' => 'region_id'],
+                'clubs' => ['regions' => 'region_id'],
+                'ec_pois' => ['regions' => 'region_id'],
+                'provinces' => ['regions' => 'region_id'],
+                'sectors' => ['areas' => 'area_id'],
+            ];
+
+            $intersectingTable = $intersectingModelInstance->getTable();
+            $baseTable = $baseModel->getTable();
+
+            if (isset($directRelations[$intersectingTable][$baseTable])) {
+                // check if there is a direct relationship between the two models
+                $foreignKey = $directRelations[$intersectingTable][$baseTable];
+
+                // update the foreign key for all intersecting records
+                $intersectingModelClass::whereIn('id', $intersectingIds)
+                    ->update([$foreignKey => $baseModel->id]);
+
+                // set NULL for all records that no longer intersect
+                $intersectingModelClass::whereNotIn('id', $intersectingIds)
+                    ->where($foreignKey, $baseModel->id)
+                    ->update([$foreignKey => null]);
+            } else {
+                // many-to-many relationship with pivot table
+                $pivotTable = $this->determinePivotTable($baseModel->getTable(), $intersectingModelInstance->getTable());
+
+                // Sync relationships in pivot table
+                DB::table($pivotTable)->where([
+                    $this->getModelForeignKey($baseModel) => $baseModel->id,
+                ])->delete();
+
+                $pivotRecords = [];
+                foreach ($intersectingIds as $intersectingId) {
+                    // Use find instead of findOrFail to handle deleted records gracefully
+                    $intersectingModel = $intersectingModelInstance::find($intersectingId);
+
+                    if (!$intersectingModel) {
+                        Log::warning("Intersecting model not found, skipping", [
+                            'base_model' => get_class($baseModel),
+                            'base_model_id' => $baseModel->id,
+                            'intersecting_model' => $intersectingModelClass,
+                            'intersecting_id' => $intersectingId,
+                        ]);
+                        continue;
+                    }
+
+                    $baseModelForeignKey = $this->getModelForeignKey($baseModel);
+                    $intersectingModelForeignKey = $this->getModelForeignKey($intersectingModel);
+
+                    $record = [
+                        $baseModelForeignKey => $baseModel->id,
+                        $intersectingModelForeignKey => $intersectingId,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+
+                    if (Schema::hasColumn($pivotTable, 'percentage')) {
+                        try {
+                            $percentage = $this->calculateIntersectionPercentage($baseModel, $intersectingModel, $pivotTable);
+                            $record['percentage'] = $percentage;
+                        } catch (\Exception $e) {
+                            Log::warning("Failed to calculate intersection percentage, using 0", [
+                                'base_model' => get_class($baseModel),
+                                'base_model_id' => $baseModel->id,
+                                'intersecting_model' => $intersectingModelClass,
+                                'intersecting_id' => $intersectingId,
+                                'error' => $e->getMessage(),
+                            ]);
+                            $record['percentage'] = 0.0;
+                        }
+                    }
+
+                    $pivotRecords[] = $record;
+                }
+
+                if (!empty($pivotRecords)) {
+                    DB::table($pivotTable)->insert($pivotRecords);
+                    Log::info("Inserted pivot records", [
+                        'base_model' => get_class($baseModel),
+                        'base_model_id' => $baseModel->id,
+                        'intersecting_model' => $intersectingModelClass,
+                        'count' => count($pivotRecords),
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::error('Error recalculating intersections', [
+                'base_model' => get_class($baseModel),
+                'base_model_id' => $baseModel->id ?? null,
+                'base_model_table' => $baseModel->getTable() ?? null,
+                'intersecting_model' => $intersectingModelClass,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Determine pivot table name based on models
+     */
+    private function determinePivotTable(string $baseModelTable, string $intersectingModelTable): string
+    {
+        // Definizione delle relazioni dirette (con foreign key)
+        $directRelations = [
+            'areas' => ['provinces' => 'province_id'],
+            'cai_huts' => ['regions' => 'region_id'],
+            'clubs' => ['regions' => 'region_id'],
+            'ec_pois' => ['regions' => 'region_id'],
+        ];
+
+        // Verifica se esiste una relazione diretta
+        if (isset($directRelations[$intersectingModelTable][$baseModelTable])) {
+            return $directRelations[$intersectingModelTable][$baseModelTable];
+        }
+
+        // Tabelle pivot esistenti
+        $tables = [
+            'ec_tracks' => [
+                'regions' => 'ec_track_region',
+                'provinces' => 'ec_track_province',
+                'sectors' => 'ec_track_sector',
+                'areas' => 'area_hiking_route',
+                'mountain_groups' => 'mountain_group_hiking_route',
+                'ec_pois' => 'ec_track_ec_poi',
+                'clubs' => 'ec_track_club',
+                'cai_huts' => 'ec_track_cai_hut',
+            ],
+            'regions' => [
+                'ec_tracks' => 'ec_track_region',
+                'mountain_groups' => 'mountain_group_region',
+            ],
+            'provinces' => [
+                'ec_tracks' => 'ec_track_province',
+            ],
+            'sectors' => [
+                'ec_tracks' => 'ec_track_sector',
+            ],
+            'areas' => [
+                'ec_tracks' => 'area_hiking_route',
+            ],
+            'mountain_groups' => [
+                'regions' => 'mountain_group_region',
+                'cai_huts' => 'mountain_group_cai_hut',
+                'ec_pois' => 'mountain_group_ec_poi',
+                'clubs' => 'mountain_group_club',
+                'ec_tracks' => 'mountain_group_hiking_route',
+            ],
+            'cai_huts' => [
+                'mountain_groups' => 'mountain_group_cai_hut',
+                'ec_pois' => 'cai_hut_ec_poi',
+            ],
+            'ec_pois' => [
+                'mountain_groups' => 'mountain_group_ec_poi',
+                'clubs' => 'ec_poi_club',
+                'cai_huts' => 'ec_poi_cai_hut',
+                'ec_tracks' => 'ec_track_ec_poi',
+            ],
+            'clubs' => [
+                'mountain_groups' => 'mountain_group_club',
+                'ec_pois' => 'ec_poi_club',
+            ],
+
+        ];
+
+        if (isset($tables[$baseModelTable][$intersectingModelTable])) {
+            return $tables[$baseModelTable][$intersectingModelTable];
+        }
+        if (isset($tables[$intersectingModelTable][$baseModelTable])) {
+            return $tables[$intersectingModelTable][$baseModelTable];
+        }
+
+        throw new \Exception("No relationship found for {$baseModelTable} and {$intersectingModelTable}");
+    }
+
+    /**
+     * Get foreign key name for a model
+     */
+    private function getModelForeignKey($model): string
+    {
+        if (is_string($model)) {
+            $model = new $model;
+        }
+
+        return Str::singular($model->getTable()) . '_id';
+    }
+
+    /**
+     * Calculate intersection percentage
+     */
+    private function calculateIntersectionPercentage($baseModel, $intersectingModel): float
+    {
+        if (! $intersectingModel) {
+            throw new \Exception('Intersecting model not found');
+        }
+
+        // special case for ec_tracks (MultiLineString): needs to calculate intersections with ST_Length
+        if ($baseModel->getTable() === 'ec_tracks') {
+            $query = DB::select("
+                SELECT (ST_Length(
+                    ST_Intersection(
+                        (SELECT geometry FROM {$baseModel->getTable()} WHERE id = ?),
+                        (SELECT geometry FROM {$intersectingModel->getTable()} WHERE id = ?)
+                    ), true
+                ) / ST_Length(
+                    (SELECT geometry FROM {$baseModel->getTable()} WHERE id = ?), 
+                    true
+                )) * 100 as percentage
+            ", [$baseModel->id, $intersectingModel->id, $baseModel->id]);
+        } elseif ($intersectingModel->getTable() === 'ec_tracks') {
+            $query = DB::select("
+                SELECT (ST_Length(
+                    ST_Intersection(
+                        (SELECT geometry FROM {$intersectingModel->getTable()} WHERE id = ?),
+                        (SELECT geometry FROM {$baseModel->getTable()} WHERE id = ?)
+                    ), true
+                ) / ST_Length(
+                    (SELECT geometry FROM {$intersectingModel->getTable()} WHERE id = ?), 
+                    true
+                )) * 100 as percentage
+            ", [$intersectingModel->id, $baseModel->id, $intersectingModel->id]);
+        } else {
+            // case for multipolygons
+            return DB::select('
+                WITH intersection AS (
+                    SELECT ST_Intersection(
+                        ST_Transform(?, 3857),
+                        ST_Transform(?, 3857)
+                    ) as geom
+                )
+                SELECT CASE 
+                    WHEN ST_Area(ST_Transform(?, 3857)) > 0 
+                    THEN (ST_Area((SELECT geom FROM intersection)) / ST_Area(ST_Transform(?, 3857))) * 100
+                    ELSE 0 
+                END as percentage
+            ', [
+                $baseModel->geometry,
+                $intersectingModel->geometry,
+                $baseModel->geometry,
+                $baseModel->geometry,
+            ])[0]->percentage ?? 0.0;
+        }
+
+        // Log for debug
+        Log::info('Calculated percentage:', [
+            'base_model' => $baseModel->getTable(),
+            'intersecting_model' => $intersectingModel->getTable(),
+            'percentage' => $query[0]->percentage,
+        ]);
+
+        return (float) ($query[0]->percentage ?? 0.0);
+    }
+}

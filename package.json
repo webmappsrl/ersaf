@@ -1,0 +1,24 @@
+{
+    "private": true,
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "start": "serve -s public/build",
+        "test:e2e": "cypress run",
+        "cypress:open": "cypress open",
+        "build-icon-select": "cd wm-package/nova-components/IconSelect && npm run dev",
+        "build-icon-select-prod": "cd wm-package/nova-components/IconSelect && npm run prod",
+        "build-IconSelect": "cd nova-components/IconSelect && npm run dev",
+        "build-IconSelect-prod": "cd nova-components/IconSelect && npm run prod"
+    },
+    "devDependencies": {
+        "axios": "^1.1.2",
+        "cypress": "^13.15.0",
+        "dotenv": "^16.4.5",
+        "laravel-vite-plugin": "^0.6.0",
+        "lodash": "^4.17.19",
+        "postcss": "^8.1.14",
+        "serve": "^14.2.3",
+        "vite": "^3.0.0"
+    }
+}

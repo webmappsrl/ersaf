@@ -1,0 +1,38 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     *
+     * @return void
+     */
+    public function up()
+    {
+        Schema::table('ec_tracks', function (Blueprint $table) {
+            $table->integer('app_id')->nullable();
+            $table->jsonb('properties')->nullable();
+            $table->foreign(['app_id'])->references(['id'])->on('apps');
+        });
+
+        // Nota: L'assegnazione di app_id verrà fatta tramite comando Artisan dopo la creazione delle app
+    }
+
+    /**
+     * Reverse the migrations.
+     *
+     * @return void
+     */
+    public function down()
+    {
+        Schema::table('ec_tracks', function (Blueprint $table) {
+            $table->dropForeign('ec_tracks_app_id_foreign');
+            $table->dropColumn('app_id');
+            $table->dropColumn('properties');
+        });
+    }
+};

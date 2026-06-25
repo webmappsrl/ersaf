@@ -15,6 +15,7 @@
         "laravel/tinker": "^2.9",
         "predis/predis": "^2.3",
         "wm/wm-package": "*",
+        "webmapp/wm-osmfeatures": "*",
         "laravel/telescope": "^5.5"
     },
     "require-dev": {
@@ -72,7 +73,8 @@
         "sort-packages": true,
         "allow-plugins": {
             "pestphp/pest-plugin": true,
-            "php-http/discovery": true
+            "php-http/discovery": true,
+            "cweagans/composer-patches": true
         }
     },
     "minimum-stability": "dev",
@@ -85,6 +87,10 @@
         {
             "type": "path",
             "url": "./wm-package"
+        },
+        {
+            "type": "path",
+            "url": "./wm-osmfeatures"
         }
     ]
 }

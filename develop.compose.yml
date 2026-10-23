@@ -5,8 +5,8 @@ services:
       file: compose.yml
       service: php
     ports:
-      - ${DOCKER_SERVE_PORT}:8000
-      - ${DOCKER_VITE_PORT}:5173
+      - 127.0.0.1:${DOCKER_SERVE_PORT}:8000
+      - 127.0.0.1:${DOCKER_VITE_PORT}:5173
     platform: linux/amd64
   db:
     extends:
@@ -42,7 +42,7 @@ services:
       - SERVER_NAME=kibana
       - SERVER_HOST=0.0.0.0
     ports:
-      - ${DOCKER_KIBANA_PORT:-5601}:5601
+      - 127.0.0.1:${DOCKER_KIBANA_PORT:-5601}:5601
   horizon:
     extra_hosts:
       - host.docker.internal:host-gateway
@@ -66,8 +66,8 @@ services:
     image: "minio/minio:latest"
     container_name: "minio-${APP_NAME}"
     ports:
-      - "${FORWARD_MINIO_PORT:-9000}:9000"
-      - "${FORWARD_MINIO_CONSOLE_PORT:-8900}:8900"
+      - "127.0.0.1:${FORWARD_MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${FORWARD_MINIO_CONSOLE_PORT:-8900}:8900"
     environment:
       MINIO_ROOT_USER: laravel
       # at least 8 chars
@@ -90,5 +90,5 @@ services:
     image: "axllent/mailpit:latest"
     platform: linux/amd64
     ports:
-    - "${FORWARD_MAILPIT_PORT:-1025}:1025"
-    - "${FORWARD_MAILPIT_DASHBOARD_PORT:-8025}:8025"
+    - "127.0.0.1:${FORWARD_MAILPIT_PORT:-1025}:1025"
+    - "127.0.0.1:${FORWARD_MAILPIT_DASHBOARD_PORT:-8025}:8025"

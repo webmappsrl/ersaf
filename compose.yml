@@ -8,7 +8,7 @@ services:
     container_name: "php-${APP_NAME}"
     image: wm-phpfpm:8.4
     ports:
-      - ${DOCKER_PHP_PORT}:9000
+      - 127.0.0.1:${DOCKER_PHP_PORT}:9000
     volumes:
       - ".:/var/www/html/${DOCKER_PROJECT_DIR_NAME}"
     working_dir: "/var/www/html/${DOCKER_PROJECT_DIR_NAME}"
@@ -24,7 +24,7 @@ services:
     volumes:
       - "./docker/volumes/postgresql/data:/var/lib/postgresql/data"
     ports:
-      - ${DOCKER_PSQL_PORT}:5432
+      - 127.0.0.1:${DOCKER_PSQL_PORT}:5432
   redis:
     image: redis:latest
     container_name: "redis-${APP_NAME}"
@@ -100,7 +100,7 @@ services:
       - SERVER_BASEPATH=/kibana
       - SERVER_REWRITEBASEPATH=false
     ports:
-      - ${DOCKER_KIBANA_PORT:-5601}:5601
+      - 127.0.0.1:${DOCKER_KIBANA_PORT:-5601}:5601
   horizon:
     extra_hosts:
       - host.docker.internal:host-gateway

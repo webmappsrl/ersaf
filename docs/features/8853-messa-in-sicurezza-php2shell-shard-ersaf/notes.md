@@ -31,7 +31,39 @@ Hetzner di entrambi i server fatti prima.
 - **Lacune:** i log sono alterabili da chi avesse avuto RCE, e il log FPM interno non c'è.
   L'esito pulito non sostituisce la rotazione dei segreti, che resta a Giuseppe per tutti i server.
 
+## Esito applicazione (23/10/2026)
+
+### UAT
+
+`main` sul server in fast-forward da `ca64ef2` a `30844d3`. Restano modificati in locale
+`NovaServiceProvider.php` e `footer.blade.php`, più `storage/debugbar/` non tracciato.
+
+Rebuild con `--pull` da `php:8.4.27-fpm`. Immagine nuova `sha256:df6eeb51…` taggata
+`wm-phpfpm:8.4`; la precedente (`sha256:f742d60d…`, PHP 8.4.3) resta `wm-phpfpm:8.4-pre-8853`.
+`php -v` dentro `php-ersafuat` e `horizon-ersafuat`: **PHP 8.4.27**. Pool FPM: upload 32M,
+post 128M, `session.upload_progress.enabled` disattivato. Porte pubblicate su `127.0.0.1`
+(nessuna su `0.0.0.0`): Postgres, Kibana, MinIO e Mailpit da un'altra macchina si raggiungono
+solo con un tunnel SSH. Home 302, `/nova/login` 200, `/wmfe/` 403, POST da 140MB rifiutata
+con 413 e la home ancora 302, POST da 20MB con 405. Horizon in esecuzione, nessun job fallito.
+
+### DEV spento
+
+Il dev ha fatto il power off dal pannello Hetzner il 23/10/2026, senza cancellare il server.
+Verifica: `ssh dev.ersaf` (`49.13.142.17`, porta 22) in timeout dopo 5 secondi;
+`https://ersaf.dev.maphub.it` in timeout dopo 10 secondi. Nessuna risposta HTTP.
+
 ## Deviazioni dal piano
+
+### Task 4 — vhost Kibana
+
+Il piano si aspettava che `/kibana/` rispondesse col vhost già presente. Apache mandava il
+proxy a `localhost:5601`, mentre il container è pubblicato su `127.0.0.1:5608`
+(`DOCKER_KIBANA_PORT` nel `.env` dell'UAT; la porta era già la 5608 prima del recreate).
+Sulla 5601 non ascolta nessuno; sulla 5608 Kibana risponde 302. Con l'ok del dev,
+`ProxyPass` e `ProxyPassReverse` di `/kibana/` sono stati portati a `5608` nei due vhost
+(`sites-available/ersaf.uat.maphub.it.conf` e quello SSL). Copie precedenti `*.bak-8853`.
+`apache2ctl configtest` ok, Apache ricaricato. `/kibana/` risponde 302 verso
+`/kibana/login`, la login 200. La modifica è solo sull'host UAT, non nel repo.
 
 ### Task 5 — ordine sul DEV
 
@@ -69,7 +101,8 @@ Nessuno, per ora.
   osm2cai2 (DB `osm2cai2`, storia ripartita il 04/12/2025, nessun commit in comune con
   `webmappsrl/ersaf`, feature «Rel datapack» in stage dal 17/06). Snapshot Hetzner e power off,
   senza cancellare il server e senza toccare le policy di riavvio (`restart=always`, Apache
-  `enabled`): chi lo riaccenderà lo aggiornerà (decisione del dev).
+  `enabled`): chi lo riaccenderà lo aggiornerà (decisione del dev). Power off eseguito dal
+  dev il 23/10/2026; SSH e HTTPS in timeout, vedi «DEV spento».
 - **Limiti di upload 32M / 128M**, come su camminiditalia: sull'UAT la tabella `media` è vuota
   e il bucket `wmfe` contiene 1,3MB (massimo 1,1MB).
 - **Porte su `127.0.0.1`** in `compose.yml` e `develop.compose.yml`, come su maphub (oc:8842).

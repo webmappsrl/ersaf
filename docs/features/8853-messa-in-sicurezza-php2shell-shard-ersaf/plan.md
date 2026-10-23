@@ -120,6 +120,8 @@ Modi di fallimento che i check del piano non esercitano, dal più probabile:
 
 ### Task 4 — UAT: applicazione e verifica
 
+> ⚠️ L'implementazione ha deviato da questo task: [notes.md](notes.md#task-4--vhost-kibana)
+
 **Files:** nessuno (SSH sull'UAT, dopo il merge su `main` approvato al review-gate).
 
 - [ ] **Step 4.1:** **Horizon giù per primo**:

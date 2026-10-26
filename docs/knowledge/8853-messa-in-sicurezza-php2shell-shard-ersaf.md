@@ -23,8 +23,10 @@ ersaf.
   Postgres, Kibana, MinIO e Mailpit da un'altra macchina si raggiungono solo con un tunnel SSH.
   `local.compose.yml` ha ancora Kibana e `artisan serve` su `0.0.0.0` (solo macchina del dev).
 - **Ambienti:** la produzione di fatto è l'UAT (`ersaf.uat.maphub.it`, avviato con
-  `develop.compose.yml`). Il server `ersaf.dev.maphub.it` è da spegnere (decisione di oc:8853):
-  non gira lo shard ma un prototipo derivato da osm2cai2, mai committato su GitHub.
+  `develop.compose.yml`). Il vhost Apache dell'UAT manda `/kibana/` a `localhost:5608`
+  (`DOCKER_KIBANA_PORT` del `.env` del server): la configurazione è solo sull'host, non nel repo.
+  Il server `ersaf.dev.maphub.it` è spento dal 23/10/2026, senza essere stato cancellato
+  (oc:8853): non gira lo shard ma un prototipo derivato da osm2cai2, mai committato su GitHub.
 - **Il deploy non aggiorna l'immagine:** `prod-deploy.yml` non ha mai girato con successo (nessuna
   variabile `HOSTPROD`, esiti del 22/06 e 25/06/2026) e comunque fa solo `git pull` + script. Una
   modifica a `docker/configs/phpfpm/` o ai `ports` arriva sull'UAT solo con `git pull`, build
